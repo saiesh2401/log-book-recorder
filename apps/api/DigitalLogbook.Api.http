@@ -1,0 +1,6 @@
+@DigitalLogbook.Api_HostAddress = http://localhost:5263
+
+GET {{DigitalLogbook.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

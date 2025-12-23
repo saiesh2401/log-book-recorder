@@ -1,0 +1,26 @@
+# .NET
+bin/
+obj/
+
+# Node / frontend (future)
+node_modules/
+
+# Local DB & storage
+storage/app.db
+storage/templates/
+storage/drafts/
+storage/exports/
+storage/images/
+
+# OS / IDE
+.vscode/
+.vs/
+*.user
+*.suo
+*.log
+
+# Secrets
+appsettings.Development.json
+
+# Test assets
+tests/assets/*.pdf
