@@ -5,6 +5,7 @@ export interface Template {
   title: string;
   collegeName: string | null;
   originalFileName: string;
+  hasFormFields: boolean;
   createdAtUtc: string;
 }
 
@@ -33,4 +34,8 @@ export async function uploadTemplate(
 
 export function getTemplateFileUrl(templateId: string): string {
   return `http://localhost:5263/api/templates/${templateId}/file`;
+}
+
+export async function deleteTemplate(templateId: string): Promise<void> {
+  await api.delete(`/api/templates/${templateId}`);
 }

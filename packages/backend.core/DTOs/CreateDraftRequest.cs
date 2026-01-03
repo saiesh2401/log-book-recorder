@@ -6,5 +6,6 @@ namespace Backend.Core.DTOs;
 public record CreateDraftRequest(
 	Guid TemplateId,
 	JsonElement FormData,
+	JsonElement? Annotations,
 	string? DrawingDataUrl
 );

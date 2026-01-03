@@ -7,5 +7,6 @@ public record TemplateDto(
     string Title,
     string? CollegeName,
     string OriginalFileName,
+    bool HasFormFields,
     DateTime CreatedAtUtc
 );

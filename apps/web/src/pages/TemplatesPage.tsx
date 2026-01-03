@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getTemplates, Template } from '../api/templates';
+import { getTemplates, deleteTemplate, Template } from '../api/templates';
 import { getStoredUser, logout } from '../api/auth';
 import TemplateUploadForm from '../components/TemplateUploadForm';
 
@@ -30,6 +30,21 @@ export default function TemplatesPage() {
 
   const handleLogout = () => {
     logout();
+  };
+
+  const handleDelete = async (templateId: string, templateTitle: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent navigation
+
+    if (!window.confirm(`Are you sure you want to delete "${templateTitle}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await deleteTemplate(templateId);
+      await fetchTemplates(); // Refresh the list
+    } catch (err) {
+      alert('Failed to delete template. Please try again.');
+    }
   };
 
   return (
@@ -104,6 +119,21 @@ export default function TemplatesPage() {
                   }}
                 >
                   Fill Form →
+                </button>
+                <button
+                  onClick={(e) => handleDelete(tpl.id, tpl.title, e)}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem',
+                    marginTop: '0.5rem',
+                    backgroundColor: '#dc3545',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  🗑️ Delete
                 </button>
               </div>
             ))}

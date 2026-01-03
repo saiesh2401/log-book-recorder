@@ -26,17 +26,17 @@ export interface User {
 }
 
 export async function register(data: RegisterRequest): Promise<AuthResponse> {
-    const response = await apiClient.post<AuthResponse>('/auth/register', data);
+    const response = await apiClient.post<AuthResponse>('/api/auth/register', data);
     return response.data;
 }
 
 export async function login(data: LoginRequest): Promise<AuthResponse> {
-    const response = await apiClient.post<AuthResponse>('/auth/login', data);
+    const response = await apiClient.post<AuthResponse>('/api/auth/login', data);
     return response.data;
 }
 
 export async function getCurrentUser(): Promise<User> {
-    const response = await apiClient.get<User>('/auth/me');
+    const response = await apiClient.get<User>('/api/auth/me');
     return response.data;
 }
 

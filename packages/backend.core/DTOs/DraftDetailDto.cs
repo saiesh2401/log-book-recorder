@@ -7,6 +7,7 @@ public record DraftDetailDto(
     Guid TemplateId,
     int Version,
     JsonElement FormData,
+    JsonElement? Annotations,
     bool HasDrawing,
     DateTime CreatedAtUtc,
     DateTime UpdatedAtUtc

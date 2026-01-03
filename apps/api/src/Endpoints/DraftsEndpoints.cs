@@ -28,6 +28,7 @@ public static class DraftsEndpoints
 			var nextVersion = maxVersion + 1;
 
 			var formDataJson = JsonSerializer.Serialize(req.FormData);
+			var annotationsJson = req.Annotations.HasValue ? JsonSerializer.Serialize(req.Annotations.Value) : null;
 
 			var id = Guid.NewGuid();
 			string? drawingPath = null;
@@ -67,6 +68,7 @@ public static class DraftsEndpoints
 				UserId = userId,
 				Version = nextVersion,
 				FormDataJson = formDataJson,
+				AnnotationsJson = annotationsJson,
 				DrawingImagePath = drawingPath,
 				Status = "Draft",
 				CreatedAtUtc = now,
@@ -114,11 +116,25 @@ public static class DraftsEndpoints
 				formData = JsonDocument.Parse("{}").RootElement.Clone();
 			}
 
+			JsonElement? annotations = null;
+			if (!string.IsNullOrWhiteSpace(draft.AnnotationsJson))
+			{
+				try
+				{
+					annotations = JsonSerializer.Deserialize<JsonElement>(draft.AnnotationsJson);
+				}
+				catch
+				{
+					// Ignore invalid annotations JSON
+				}
+			}
+
 			var detail = new DraftDetailDto(
 				draft.Id,
 				draft.TemplateId,
 				draft.Version,
 				formData,
+				annotations,
 				HasDrawing: !string.IsNullOrWhiteSpace(draft.DrawingImagePath) && File.Exists(draft.DrawingImagePath),
 				draft.CreatedAtUtc,
 				draft.UpdatedAtUtc
@@ -165,6 +181,7 @@ public static class DraftsEndpoints
                     draft.Id.ToString(),
                     userId.ToString(),
                     formData,
+                    draft.AnnotationsJson,
                     draft.DrawingImagePath,
                     env.ContentRootPath
                 );

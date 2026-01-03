@@ -11,17 +11,17 @@ namespace Backend.Pdf;
 
 public interface IPdfExporter
 {
-    Task<string> ExportDraftAsync(string templatePath, string draftId, string userId, JsonDocument formData, string? drawingPath, string contentRootPath);
+    Task<string> ExportDraftAsync(string templatePath, string draftId, string userId, JsonDocument formData, string? annotationsJson, string? drawingPath, string contentRootPath);
 }
 
 public class PdfExporter : IPdfExporter
 {
-    public async Task<string> ExportDraftAsync(string templatePath, string draftId, string userId, JsonDocument formData, string? drawingPath, string contentRootPath)
+    public async Task<string> ExportDraftAsync(string templatePath, string draftId, string userId, JsonDocument formData, string? annotationsJson, string? drawingPath, string contentRootPath)
     {
-        return await Task.Run(() => ExportDraftSync(templatePath, draftId, userId, formData, drawingPath, contentRootPath));
+        return await Task.Run(() => ExportDraftSync(templatePath, draftId, userId, formData, annotationsJson, drawingPath, contentRootPath));
     }
 
-    private string ExportDraftSync(string templatePath, string draftId, string userId, JsonDocument formData, string? drawingPath, string contentRootPath)
+    private string ExportDraftSync(string templatePath, string draftId, string userId, JsonDocument formData, string? annotationsJson, string? drawingPath, string contentRootPath)
     {
         // Create output directory
         var exportsDir = Path.GetFullPath(Path.Combine(contentRootPath, "..", "..", "storage", "exports", userId));
@@ -64,14 +64,23 @@ public class PdfExporter : IPdfExporter
                         FillFormFields(form, formData);
                         form.FlattenFields(); // Flatten to make fields non-editable
                     }
-                    // If no form fields, just copy the template as-is for now
-                    // TODO: Implement text overlay for scanned PDFs
+                    
+                    // Render annotations if present (for unfillable PDFs)
+                    if (!string.IsNullOrWhiteSpace(annotationsJson))
+                    {
+                        PdfExporterAnnotations.RenderAnnotations(pdfDoc, annotationsJson);
+                    }
                 }
             }
             catch (Exception ex)
             {
                 // If PDF processing fails, fall back to simple copy
-                Console.WriteLine($"PDF processing failed: {ex.Message}. Falling back to template copy.");
+                Console.WriteLine($"PDF processing failed: {ex.GetType().Name}: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                if (ex.InnerException != null)
+                {
+                    Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
+                }
                 var templateBytes = File.ReadAllBytes(templatePath);
                 File.WriteAllBytes(outputPath, templateBytes);
             }

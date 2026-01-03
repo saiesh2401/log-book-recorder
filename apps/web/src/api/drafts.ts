@@ -8,11 +8,25 @@ export interface Draft {
     updatedAtUtc: string;
 }
 
+export interface Annotation {
+    id: string;
+    text: string;
+    x: number;  // 0-1 normalized
+    y: number;  // 0-1 normalized
+    fontSize: number;
+    fontFamily: string;
+    color: string;
+    bold: boolean;
+    italic: boolean;
+    pageNumber: number;
+}
+
 export interface DraftDetail {
     id: string;
     templateId: string;
     version: number;
     formData: Record<string, any>;
+    annotations: Annotation[] | null;
     hasDrawing: boolean;
     createdAtUtc: string;
     updatedAtUtc: string;
@@ -21,6 +35,7 @@ export interface DraftDetail {
 export interface CreateDraftRequest {
     templateId: string;
     formData: Record<string, any>;
+    annotations?: Annotation[];
     drawingDataUrl?: string;
 }
 

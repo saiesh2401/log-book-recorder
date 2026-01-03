@@ -58,6 +58,21 @@ public static class TemplatesEndpoints
 				await uploadStream.CopyToAsync(outStream);
 			}
 
+			// Detect if PDF has form fields using iText7
+			bool hasFormFields = false;
+			try
+			{
+				using var pdfReader = new iText.Kernel.Pdf.PdfReader(storedFilePath);
+				using var pdfDoc = new iText.Kernel.Pdf.PdfDocument(pdfReader);
+				var acroForm = iText.Forms.PdfAcroForm.GetAcroForm(pdfDoc, false);
+				hasFormFields = acroForm?.GetAllFormFields()?.Count > 0;
+			}
+			catch
+			{
+				// If detection fails, assume no form fields
+				hasFormFields = false;
+			}
+
 			var createdAtUtc = DateTime.UtcNow;
 			var entity = new Backend.Core.Models.PdfTemplate
 			{
@@ -66,13 +81,14 @@ public static class TemplatesEndpoints
 				CollegeName = string.IsNullOrWhiteSpace(collegeName) ? null : collegeName,
 				OriginalFileName = file.FileName,
 				StoredPath = storedFilePath, // store absolute path for consistency
+				HasFormFields = hasFormFields,
 				CreatedAtUtc = createdAtUtc,
 			};
 
 			db.PdfTemplates.Add(entity);
 			await db.SaveChangesAsync();
 
-			var dto = new TemplateDto(entity.Id, entity.Title, entity.CollegeName, entity.OriginalFileName, entity.CreatedAtUtc);
+			var dto = new TemplateDto(entity.Id, entity.Title, entity.CollegeName, entity.OriginalFileName, entity.HasFormFields, entity.CreatedAtUtc);
 			return Results.Created($"/api/templates/{entity.Id}", dto);
 		})
 		.WithName("UploadTemplate")
@@ -85,7 +101,7 @@ public static class TemplatesEndpoints
 		{
 			var list = await db.PdfTemplates
 				.OrderByDescending(t => t.CreatedAtUtc)
-				.Select(t => new TemplateDto(t.Id, t.Title, t.CollegeName, t.OriginalFileName, t.CreatedAtUtc))
+				.Select(t => new TemplateDto(t.Id, t.Title, t.CollegeName, t.OriginalFileName, t.HasFormFields, t.CreatedAtUtc))
 				.ToListAsync();
 			return Results.Ok(list);
 		})
@@ -114,6 +130,35 @@ endpoints.MapGet("/api/templates/{id:guid}/file", async (Guid id, AppDbContext d
 .WithName("GetTemplateFile")
 .Produces(StatusCodes.Status200OK)
 .Produces(StatusCodes.Status404NotFound);
+
+		// DELETE /api/templates/{id} - delete template
+		endpoints.MapDelete("/api/templates/{id:guid}", async (Guid id, AppDbContext db) =>
+		{
+			var template = await db.PdfTemplates.FirstOrDefaultAsync(t => t.Id == id);
+			if (template is null) return Results.NotFound();
+
+			// Delete the file from disk
+			if (File.Exists(template.StoredPath))
+			{
+				try
+				{
+					File.Delete(template.StoredPath);
+				}
+				catch
+				{
+					// Continue even if file deletion fails
+				}
+			}
+
+			// Delete from database
+			db.PdfTemplates.Remove(template);
+			await db.SaveChangesAsync();
+
+			return Results.NoContent();
+		})
+		.WithName("DeleteTemplate")
+		.Produces(StatusCodes.Status204NoContent)
+		.Produces(StatusCodes.Status404NotFound);
 
 		return endpoints;
 	}
