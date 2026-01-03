@@ -32,5 +32,5 @@ export async function uploadTemplate(
 }
 
 export function getTemplateFileUrl(templateId: string): string {
-  return `/api/templates/${templateId}/file`;
+  return `http://localhost:5263/api/templates/${templateId}/file`;
 }

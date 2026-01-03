@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { login } from '../api/auth';
+import { register } from '../api/auth';
 
-export default function LoginPage() {
+export default function RegisterPage() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [fullName, setFullName] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
@@ -17,25 +18,25 @@ export default function LoginPage() {
         setLoading(true);
 
         try {
-            console.log('Attempting login with:', { email });
-            const response = await login({ email, password });
-            console.log('Login response:', response);
+            console.log('Attempting registration with:', { email, fullName });
+            const response = await register({ email, password, fullName });
+            console.log('Registration response:', response);
 
             // Store token and user info
             localStorage.setItem('authToken', response.token);
             localStorage.setItem('user', JSON.stringify(response));
             console.log('Token stored, redirecting to templates');
 
-            setSuccess('Login successful! Redirecting...');
+            setSuccess('Registration successful! Redirecting...');
 
             // Redirect to templates after a brief delay to show success message
             setTimeout(() => {
                 navigate('/templates');
             }, 1000);
         } catch (err: any) {
-            console.error('Login error:', err);
+            console.error('Registration error:', err);
             console.error('Error response:', err.response);
-            const errorMessage = err.response?.data?.error || err.message || 'Login failed. Please check your credentials.';
+            const errorMessage = err.response?.data?.error || err.message || 'Registration failed. Please try again.';
             console.error('Showing error:', errorMessage);
             setError(errorMessage);
         } finally {
@@ -45,7 +46,7 @@ export default function LoginPage() {
 
     return (
         <div style={{ maxWidth: '400px', margin: '4rem auto', padding: '2rem' }}>
-            <h1>Login</h1>
+            <h1>Register</h1>
 
             <form onSubmit={handleSubmit} style={{ marginTop: '2rem' }}>
                 {success && (
@@ -76,6 +77,25 @@ export default function LoginPage() {
 
                 <div style={{ marginBottom: '1rem' }}>
                     <label style={{ display: 'block', marginBottom: '0.5rem' }}>
+                        Full Name:
+                        <input
+                            type="text"
+                            value={fullName}
+                            onChange={(e) => setFullName(e.target.value)}
+                            required
+                            disabled={loading}
+                            style={{
+                                width: '100%',
+                                padding: '0.5rem',
+                                marginTop: '0.25rem',
+                                fontSize: '1rem'
+                            }}
+                        />
+                    </label>
+                </div>
+
+                <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ display: 'block', marginBottom: '0.5rem' }}>
                         Email:
                         <input
                             type="email"
@@ -95,12 +115,13 @@ export default function LoginPage() {
 
                 <div style={{ marginBottom: '1.5rem' }}>
                     <label style={{ display: 'block', marginBottom: '0.5rem' }}>
-                        Password:
+                        Password (min 6 characters):
                         <input
                             type="password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             required
+                            minLength={6}
                             disabled={loading}
                             style={{
                                 width: '100%',
@@ -119,19 +140,19 @@ export default function LoginPage() {
                         width: '100%',
                         padding: '0.75rem',
                         fontSize: '1rem',
-                        backgroundColor: '#007bff',
+                        backgroundColor: '#28a745',
                         color: 'white',
                         border: 'none',
                         borderRadius: '4px',
                         cursor: loading ? 'not-allowed' : 'pointer'
                     }}
                 >
-                    {loading ? 'Logging in...' : 'Login'}
+                    {loading ? 'Creating account...' : 'Register'}
                 </button>
             </form>
 
             <p style={{ marginTop: '1.5rem', textAlign: 'center' }}>
-                Don't have an account? <Link to="/register">Register here</Link>
+                Already have an account? <Link to="/login">Login here</Link>
             </p>
         </div>
     );

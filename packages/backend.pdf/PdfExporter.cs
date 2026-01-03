@@ -42,16 +42,39 @@ public class PdfExporter : IPdfExporter
             throw new Exception($"Failed to read template: {ex.Message}", ex);
         }
 
-        // Atomically write the PDF bytes to the final output file using retry logic
-        // for Windows file lock scenarios (antivirus, indexing, or lingering handles).
+        // Atomically write the PDF with form data filled
         RetryFileOperation(() =>
         {
             // Delete old version if exists
             if (File.Exists(outputPath))
                 File.Delete(outputPath);
 
-            // Write PDF bytes
-            File.WriteAllBytes(outputPath, templateBytes);
+            try
+            {
+                // Use iText to fill the form
+                using (var reader = new PdfReader(templatePath))
+                using (var writer = new PdfWriter(outputPath))
+                using (var pdfDoc = new PdfDocument(reader, writer))
+                {
+                    var form = PdfAcroForm.GetAcroForm(pdfDoc, false);
+                    
+                    if (form != null && form.GetAllFormFields().Count > 0)
+                    {
+                        // Try to fill form fields if they exist
+                        FillFormFields(form, formData);
+                        form.FlattenFields(); // Flatten to make fields non-editable
+                    }
+                    // If no form fields, just copy the template as-is for now
+                    // TODO: Implement text overlay for scanned PDFs
+                }
+            }
+            catch (Exception ex)
+            {
+                // If PDF processing fails, fall back to simple copy
+                Console.WriteLine($"PDF processing failed: {ex.Message}. Falling back to template copy.");
+                var templateBytes = File.ReadAllBytes(templatePath);
+                File.WriteAllBytes(outputPath, templateBytes);
+            }
         });
 
         return outputPath;
@@ -61,34 +84,27 @@ public class PdfExporter : IPdfExporter
     /// Retries a file operation (Delete, Move) up to 5 times with 100ms delay
     /// if IOException or UnauthorizedAccessException occurs (Windows file lock scenarios).
     /// </summary>
-    private void RetryFileOperation(Action operation)
+    private void RetryFileOperation(Action operation, int maxRetries = 3, int delayMs = 100)
     {
-        const int maxRetries = 5;
-        const int delayMs = 100;
-
-        for (int attempt = 0; attempt < maxRetries; attempt++)
+        for (int i = 0; i < maxRetries; i++)
         {
             try
             {
                 operation();
                 return;
             }
-            catch (IOException) when (attempt < maxRetries - 1)
-            {
-                System.Threading.Thread.Sleep(delayMs);
-            }
-            catch (UnauthorizedAccessException) when (attempt < maxRetries - 1)
+            catch (IOException) when (i < maxRetries - 1)
             {
                 System.Threading.Thread.Sleep(delayMs);
             }
         }
-
-        // Final attempt without catch; let exception propagate if all retries exhausted
+        // Final attempt without catching
         operation();
     }
 
-    private void FillFormFields(IDictionary<string, PdfFormField> fields, JsonDocument formData)
+    private void FillFormFields(PdfAcroForm form, JsonDocument formData)
     {
+        var fields = form.GetAllFormFields();
         var root = formData.RootElement;
 
         foreach (var kvp in fields)

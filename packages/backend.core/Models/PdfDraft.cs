@@ -6,7 +6,7 @@ public class PdfDraft
 {
     public Guid Id { get; set; }
     public Guid TemplateId { get; set; }
-    public string UserId { get; set; } = string.Empty;
+    public Guid UserId { get; set; }
     public int Version { get; set; }
     public string FormDataJson { get; set; } = string.Empty;
     public string? DrawingImagePath { get; set; }

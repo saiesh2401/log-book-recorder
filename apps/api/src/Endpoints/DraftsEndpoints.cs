@@ -44,7 +44,7 @@ public static class DraftsEndpoints
 					try
 					{
 						var bytes = Convert.FromBase64String(b64);
-						var imagesRoot = Path.Combine(Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "..", "storage")), "images", userId);
+						var imagesRoot = Path.Combine(Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "..", "storage")), "images", userId.ToString());
 						Directory.CreateDirectory(imagesRoot);
 						drawingPath = Path.Combine(imagesRoot, $"{id}.png");
 						await File.WriteAllBytesAsync(drawingPath, bytes);
@@ -163,7 +163,7 @@ public static class DraftsEndpoints
                 var exportPath = await exporter.ExportDraftAsync(
                     draft.Template.StoredPath,
                     draft.Id.ToString(),
-                    userId,
+                    userId.ToString(),
                     formData,
                     draft.DrawingImagePath,
                     env.ContentRootPath
@@ -193,7 +193,7 @@ public static class DraftsEndpoints
             var draft = await db.PdfDrafts.AsNoTracking().FirstOrDefaultAsync(d => d.Id == id && d.UserId == userId);
             if (draft is null) return Results.NotFound();
 
-            var exportsDir = Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "..", "storage", "exports", userId));
+            var exportsDir = Path.GetFullPath(Path.Combine(env.ContentRootPath, "..", "..", "storage", "exports", userId.ToString()));
             var exportPath = Path.Combine(exportsDir, $"{id}.pdf");
 
             if (!File.Exists(exportPath))
