@@ -25,3 +25,5 @@ appsettings.Development.json
 
 # Test assets
 tests/assets/*.pdf
+Stirling-PDF/
+pdf-filler/
