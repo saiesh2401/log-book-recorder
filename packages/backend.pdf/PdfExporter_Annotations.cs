@@ -93,7 +93,9 @@ public static class PdfExporterAnnotations
                 // Calculate text width to center it horizontally
                 var textWidth = font.GetWidth(annotation.Text ?? "", annotation.FontSize);
                 var adjustedX = absoluteX - (textWidth / 2); // Center horizontally
-                var adjustedY = absoluteY; // Use exact Y position from click
+                // PDF text baseline is at the bottom of the text, so we need to subtract half the font size
+                // to center the text vertically around the clicked point
+                var adjustedY = absoluteY - (annotation.FontSize / 2); 
                 
                 Console.WriteLine($"[DEBUG] Text width: {textWidth}, Adjusted position: ({adjustedX}, {adjustedY})");
 

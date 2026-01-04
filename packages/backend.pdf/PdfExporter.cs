@@ -31,16 +31,10 @@ public class PdfExporter : IPdfExporter
         if (!File.Exists(templatePath))
             throw new FileNotFoundException($"Template file not found: {templatePath}");
 
-        // Simple approach: read template bytes, write to output with retry logic
-        byte[] templateBytes;
-        try
-        {
-            templateBytes = File.ReadAllBytes(templatePath);
-        }
-        catch (Exception ex)
-        {
-            throw new Exception($"Failed to read template: {ex.Message}", ex);
-        }
+        var ext = Path.GetExtension(templatePath);
+        var isImage = string.Equals(ext, ".jpg", StringComparison.OrdinalIgnoreCase) ||
+                      string.Equals(ext, ".jpeg", StringComparison.OrdinalIgnoreCase) ||
+                      string.Equals(ext, ".png", StringComparison.OrdinalIgnoreCase);
 
         // Atomically write the PDF with form data filled
         RetryFileOperation(() =>
@@ -51,38 +45,84 @@ public class PdfExporter : IPdfExporter
 
             try
             {
-                // Use iText to fill the form
-                using (var reader = new PdfReader(templatePath))
-                using (var writer = new PdfWriter(outputPath))
-                using (var pdfDoc = new PdfDocument(reader, writer))
+                if (isImage)
                 {
-                    var form = PdfAcroForm.GetAcroForm(pdfDoc, false);
-                    
-                    if (form != null && form.GetAllFormFields().Count > 0)
+                    // Create new PDF from Image
+                    using (var writer = new PdfWriter(outputPath))
+                    using (var pdfDoc = new PdfDocument(writer))
                     {
-                        // Try to fill form fields if they exist
-                        FillFormFields(form, formData);
-                        form.FlattenFields(); // Flatten to make fields non-editable
+                        var imageData = iText.IO.Image.ImageDataFactory.Create(templatePath);
+                        var imageWidth = imageData.GetWidth();
+                        var imageHeight = imageData.GetHeight();
+                        
+                        // Set page size to match image
+                        var pageSize = new iText.Kernel.Geom.PageSize(imageWidth, imageHeight);
+                        pdfDoc.SetDefaultPageSize(pageSize);
+                        
+                        var page = pdfDoc.AddNewPage();
+                        var canvas = new PdfCanvas(page);
+                        canvas.AddImageAt(imageData, 0, 0, false);
+
+                        // Render annotations
+                        if (!string.IsNullOrWhiteSpace(annotationsJson))
+                        {
+                            PdfExporterAnnotations.RenderAnnotations(pdfDoc, annotationsJson);
+                        }
                     }
-                    
-                    // Render annotations if present (for unfillable PDFs)
-                    if (!string.IsNullOrWhiteSpace(annotationsJson))
+                }
+                else
+                {
+                    // Use iText to fill the existing PDF form
+                    using (var reader = new PdfReader(templatePath))
+                    using (var writer = new PdfWriter(outputPath))
+                    using (var pdfDoc = new PdfDocument(reader, writer))
                     {
-                        PdfExporterAnnotations.RenderAnnotations(pdfDoc, annotationsJson);
+                        var form = PdfAcroForm.GetAcroForm(pdfDoc, false);
+                        
+                        Console.WriteLine($"[PdfExporter] Processing PDF. Form is null: {form == null}");
+                        if (form != null)
+                        {
+                            var fieldCount = form.GetAllFormFields().Count;
+                            Console.WriteLine($"[PdfExporter] Form has {fieldCount} fields");
+                        }
+                        
+                        if (form != null && form.GetAllFormFields().Count > 0)
+                        {
+                            Console.WriteLine("[PdfExporter] Attempting to fill form fields...");
+                            // Try to fill form fields if they exist
+                            FillFormFields(form, formData);
+                            form.FlattenFields(); // Flatten to make fields non-editable
+                            Console.WriteLine("[PdfExporter] Form fields flattened");
+                        }
+                        
+                        // Render annotations if present (for unfillable PDFs)
+                        if (!string.IsNullOrWhiteSpace(annotationsJson))
+                        {
+                            PdfExporterAnnotations.RenderAnnotations(pdfDoc, annotationsJson);
+                        }
                     }
                 }
             }
             catch (Exception ex)
             {
-                // If PDF processing fails, fall back to simple copy
+                // If PDF processing fails, fall back to simple copy (only for PDF templates)
                 Console.WriteLine($"PDF processing failed: {ex.GetType().Name}: {ex.Message}");
                 Console.WriteLine($"Stack trace: {ex.StackTrace}");
                 if (ex.InnerException != null)
                 {
                     Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
                 }
-                var templateBytes = File.ReadAllBytes(templatePath);
-                File.WriteAllBytes(outputPath, templateBytes);
+                
+                if (!isImage)
+                {
+                     var templateBytes = File.ReadAllBytes(templatePath);
+                     File.WriteAllBytes(outputPath, templateBytes);
+                }
+                else
+                {
+                    // Failed to convert image to PDF
+                    throw;
+                }
             }
         });
 
@@ -116,32 +156,88 @@ public class PdfExporter : IPdfExporter
         var fields = form.GetAllFormFields();
         var root = formData.RootElement;
 
+        // Log all available PDF field names for debugging
+        Console.WriteLine($"PDF has {fields.Count} form fields:");
+        foreach (var kvp in fields)
+        {
+            Console.WriteLine($"  - Field name: '{kvp.Key}'");
+        }
+
+        // Log the form data we're trying to fill
+        Console.WriteLine("Form data to fill:");
+        foreach (var property in root.EnumerateObject())
+        {
+            Console.WriteLine($"  - {property.Name} = {property.Value}");
+        }
+
+        // Try to fill fields with exact match first
+        int filledCount = 0;
         foreach (var kvp in fields)
         {
             var fieldName = kvp.Key;
             var field = kvp.Value;
 
+            // Try exact match first
             if (root.TryGetProperty(fieldName, out var value))
             {
-                try
+                if (TrySetFieldValue(field, value, fieldName))
+                    filledCount++;
+            }
+            else
+            {
+                // Try case-insensitive match
+                var matchingProp = root.EnumerateObject()
+                    .FirstOrDefault(p => string.Equals(p.Name, fieldName, StringComparison.OrdinalIgnoreCase));
+                
+                if (matchingProp.Value.ValueKind != System.Text.Json.JsonValueKind.Undefined)
                 {
-                    string strValue = value.ValueKind switch
-                    {
-                        System.Text.Json.JsonValueKind.True => "Yes",
-                        System.Text.Json.JsonValueKind.False => "Off",
-                        System.Text.Json.JsonValueKind.String => value.GetString() ?? "",
-                        System.Text.Json.JsonValueKind.Number => value.GetRawText(),
-                        _ => value.GetRawText()
-                    };
-
-                    field.SetValue(strValue);
+                    if (TrySetFieldValue(field, matchingProp.Value, fieldName))
+                        filledCount++;
                 }
-                catch
+                else
                 {
-                    // Silently skip fields that can't be filled
+                    // Try partial match (e.g., "fullName" matches "Full Name" or "FullName")
+                    var normalizedFieldName = fieldName.Replace(" ", "").Replace("_", "").ToLower();
+                    matchingProp = root.EnumerateObject()
+                        .FirstOrDefault(p => p.Name.Replace(" ", "").Replace("_", "").ToLower() == normalizedFieldName);
+                    
+                    if (matchingProp.Value.ValueKind != System.Text.Json.JsonValueKind.Undefined)
+                    {
+                        if (TrySetFieldValue(field, matchingProp.Value, fieldName))
+                            filledCount++;
+                    }
                 }
             }
         }
+
+        Console.WriteLine($"Successfully filled {filledCount} out of {fields.Count} fields");
+    }
+
+    private bool TrySetFieldValue(PdfFormField field, JsonElement value, string fieldName)
+    {
+        try
+        {
+            string strValue = value.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.True => "Yes",
+                System.Text.Json.JsonValueKind.False => "Off",
+                System.Text.Json.JsonValueKind.String => value.GetString() ?? "",
+                System.Text.Json.JsonValueKind.Number => value.GetRawText(),
+                _ => value.GetRawText()
+            };
+
+            if (!string.IsNullOrWhiteSpace(strValue))
+            {
+                field.SetValue(strValue);
+                Console.WriteLine($"  ✓ Filled field '{fieldName}' with value '{strValue}'");
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  ✗ Failed to fill field '{fieldName}': {ex.Message}");
+        }
+        return false;
     }
 
     private void AddFormDataOverlay(Document document, JsonDocument formData)

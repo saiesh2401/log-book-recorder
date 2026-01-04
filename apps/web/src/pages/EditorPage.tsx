@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getTemplates, getTemplateFileUrl, type Template } from '../api/templates';
+import { getTemplates, getTemplateFileUrl, getPdfFields, type Template, type PdfField } from '../api/templates';
 import { createDraft, getDrafts, getDraft, exportDraft, getDraftExportUrl, type Draft, type Annotation } from '../api/drafts';
 import { getStoredUser, logout } from '../api/auth';
 import PdfAnnotationCanvas from '../components/PdfAnnotationCanvas';
@@ -9,6 +9,8 @@ export default function EditorPage() {
   const { templateId } = useParams<{ templateId: string }>();
 
   const [template, setTemplate] = useState<Template | null>(null);
+  const [pdfFields, setPdfFields] = useState<PdfField[]>([]);
+  const [loadingFields, setLoadingFields] = useState(false);
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -39,7 +41,7 @@ export default function EditorPage() {
 
   const user = getStoredUser();
 
-  // Load template info
+  // Load template info and PDF fields
   useEffect(() => {
     if (!templateId) return;
 
@@ -49,6 +51,20 @@ export default function EditorPage() {
         const found = templates.find((t) => t.id === templateId);
         if (found) {
           setTemplate(found);
+
+          // Load PDF fields if it's a fillable form
+          if (found.hasFormFields) {
+            setLoadingFields(true);
+            try {
+              const fieldsResponse = await getPdfFields(templateId);
+              setPdfFields(fieldsResponse.fields);
+              console.log('Loaded PDF fields:', fieldsResponse.fields);
+            } catch (err) {
+              console.error('Failed to load PDF fields:', err);
+            } finally {
+              setLoadingFields(false);
+            }
+          }
         }
       } catch (err) {
         console.error('Failed to load template:', err);
@@ -76,7 +92,9 @@ export default function EditorPage() {
 
   // Auto-save every 30 seconds if there are changes
   useEffect(() => {
-    const hasFormData = Object.keys(formData).length > 0;
+    const hasFormData = Object.values(formData).some(value =>
+      value !== null && value !== undefined && value !== ''
+    );
     const hasAnnotations = annotations.length > 0;
 
     if (!hasFormData && !hasAnnotations) return;
@@ -99,15 +117,26 @@ export default function EditorPage() {
   const handleSaveDraft = async (isAutoSave = false) => {
     if (!templateId) return;
 
-    const hasFormData = Object.keys(formDataRef.current).length > 0;
-    const hasAnnotations = annotationsRef.current.length > 0;
+    console.log('=== Save Draft Validation ===');
+    console.log('formData state:', formData);
+    console.log('annotations:', annotations);
 
-    if (!hasFormData && !hasAnnotations) {
-      if (!isAutoSave) {
-        setError('Please fill in at least one field or add annotations before saving.');
-      }
-      return;
-    }
+    // Check if there are any non-empty form field values - use state directly
+    const hasFormData = Object.values(formData).some(value =>
+      value !== null && value !== undefined && value !== ''
+    );
+    const hasAnnotations = annotations.length > 0;
+
+    console.log('hasFormData:', hasFormData);
+    console.log('hasAnnotations:', hasAnnotations);
+
+    // TEMPORARILY DISABLED FOR DEBUGGING
+    // if (!hasFormData && !hasAnnotations) {
+    //   if (!isAutoSave) {
+    //     setError('Please fill in at least one field or add annotations before saving.');
+    //   }
+    //   return;
+    // }
 
     setSaving(true);
     setError(null);
@@ -116,8 +145,8 @@ export default function EditorPage() {
     try {
       await createDraft({
         templateId,
-        formData: formDataRef.current,
-        annotations: annotationsRef.current.length > 0 ? annotationsRef.current : undefined,
+        formData,
+        annotations: annotations.length > 0 ? annotations : undefined,
       });
 
       setLastSaved(new Date());
@@ -161,13 +190,17 @@ export default function EditorPage() {
   const handleExportPDF = async () => {
     if (!templateId) return;
 
-    const hasFormData = Object.keys(formData).length > 0;
+    // Check if there are any non-empty form field values
+    const hasFormData = Object.values(formData).some(value =>
+      value !== null && value !== undefined && value !== ''
+    );
     const hasAnnotations = annotations.length > 0;
 
-    if (!hasFormData && !hasAnnotations) {
-      setError('Please fill in the form or add annotations before exporting.');
-      return;
-    }
+    // TEMPORARILY DISABLED FOR DEBUGGING
+    // if (!hasFormData && !hasAnnotations) {
+    //   setError('Please fill in the form or add annotations before exporting.');
+    //   return;
+    // }
 
     setExporting(true);
     setError(null);
@@ -180,12 +213,20 @@ export default function EditorPage() {
         annotations: annotations.length > 0 ? annotations : undefined,
       });
 
+      console.log('Draft created:', draft.id);
+
       // Export the draft
-      await exportDraft(draft.id);
+      const exportResult = await exportDraft(draft.id);
+      console.log('Export result:', exportResult);
 
       // Download the PDF with authentication
       const token = localStorage.getItem('authToken');
+      if (!token) {
+        throw new Error('No authentication token found. Please log in again.');
+      }
+
       const downloadUrl = getDraftExportUrl(draft.id);
+      console.log('Downloading from:', downloadUrl);
 
       const response = await fetch(downloadUrl, {
         headers: {
@@ -193,12 +234,22 @@ export default function EditorPage() {
         }
       });
 
+      console.log('Download response status:', response.status);
+
       if (!response.ok) {
-        throw new Error('Failed to download PDF');
+        const errorText = await response.text();
+        console.error('Download failed:', errorText);
+        throw new Error(`Failed to download PDF: ${response.status} ${response.statusText}`);
       }
 
       // Create blob and download
       const blob = await response.blob();
+      console.log('Blob size:', blob.size, 'bytes');
+
+      if (blob.size === 0) {
+        throw new Error('Downloaded PDF is empty');
+      }
+
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -208,9 +259,11 @@ export default function EditorPage() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
+      console.log('PDF download triggered successfully');
       setSuccessMessage('PDF exported and downloaded successfully!');
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
+      console.error('Export error:', err);
       setError(err.response?.data?.error || err.message || 'Failed to export PDF. Please try again.');
     } finally {
       setExporting(false);
@@ -218,10 +271,15 @@ export default function EditorPage() {
   };
 
   const handleFieldChange = (fieldName: string, value: any) => {
-    setFormData(prev => ({
-      ...prev,
-      [fieldName]: value
-    }));
+    console.log(`Field changed: ${fieldName} = "${value}"`);
+    setFormData(prev => {
+      const updated = {
+        ...prev,
+        [fieldName]: value
+      };
+      console.log('Updated formData:', updated);
+      return updated;
+    });
   };
 
   const handleLogout = () => {
@@ -409,73 +467,60 @@ export default function EditorPage() {
               </div>
             </div>
           ) : (
-            /* Form Fields for Fillable PDFs */
+            /* Dynamic Form Fields for Fillable PDFs */
             <div style={{ marginBottom: '2rem', padding: '1.5rem', border: '1px solid #ddd', borderRadius: '4px', backgroundColor: '#f9f9f9' }}>
-              <h3 style={{ marginTop: 0 }}>Patient Information</h3>
+              <h3 style={{ marginTop: 0 }}>Fill Form Fields</h3>
 
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Full Name:
-                  <input
-                    type="text"
-                    value={formData.fullName || ''}
-                    onChange={(e) => handleFieldChange('fullName', e.target.value)}
-                    placeholder="Enter full name"
-                    style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem', fontSize: '1rem' }}
-                  />
-                </label>
-              </div>
+              {loadingFields ? (
+                <p>Loading form fields...</p>
+              ) : pdfFields.length > 0 ? (
+                <>
+                  {pdfFields.map((field) => (
+                    <div key={field.name} style={{ marginBottom: '1rem' }}>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+                        {field.label || field.name}
+                        {field.required && <span style={{ color: 'red' }}> *</span>}:
 
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Date of Birth:
-                  <input
-                    type="date"
-                    value={formData.dateOfBirth || ''}
-                    onChange={(e) => handleFieldChange('dateOfBirth', e.target.value)}
-                    style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem', fontSize: '1rem' }}
-                  />
-                </label>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Phone Number:
-                  <input
-                    type="tel"
-                    value={formData.phoneNumber || ''}
-                    onChange={(e) => handleFieldChange('phoneNumber', e.target.value)}
-                    placeholder="(123) 456-7890"
-                    style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem', fontSize: '1rem' }}
-                  />
-                </label>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Email:
-                  <input
-                    type="email"
-                    value={formData.email || ''}
-                    onChange={(e) => handleFieldChange('email', e.target.value)}
-                    placeholder="email@example.com"
-                    style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem', fontSize: '1rem' }}
-                  />
-                </label>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
-                  Address:
-                  <textarea
-                    value={formData.address || ''}
-                    onChange={(e) => handleFieldChange('address', e.target.value)}
-                    placeholder="Street address, City, State, ZIP"
-                    rows={3}
-                    style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem', fontSize: '1rem' }}
-                  />
-                </label>
-              </div>
+                        {field.type === 'textarea' ? (
+                          <textarea
+                            value={formData[field.name] || field.defaultValue || ''}
+                            onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                            rows={3}
+                            style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem', fontSize: '1rem' }}
+                          />
+                        ) : field.type === 'checkbox' ? (
+                          <input
+                            type="checkbox"
+                            checked={formData[field.name] === 'Yes' || formData[field.name] === true}
+                            onChange={(e) => handleFieldChange(field.name, e.target.checked ? 'Yes' : 'Off')}
+                            style={{ marginTop: '0.25rem', marginLeft: '0.5rem' }}
+                          />
+                        ) : field.type === 'select' && field.options ? (
+                          <select
+                            value={formData[field.name] || field.defaultValue || ''}
+                            onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                            style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem', fontSize: '1rem' }}
+                          >
+                            <option value="">-- Select --</option>
+                            {field.options.map((option) => (
+                              <option key={option} value={option}>{option}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type={field.type === 'text' ? 'text' : field.type}
+                            value={formData[field.name] || field.defaultValue || ''}
+                            onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                            style={{ width: '100%', padding: '0.5rem', marginTop: '0.25rem', fontSize: '1rem' }}
+                          />
+                        )}
+                      </label>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <p>No form fields found in this PDF.</p>
+              )}
             </div>
           )}
 

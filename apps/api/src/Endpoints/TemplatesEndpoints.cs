@@ -31,17 +31,26 @@ public static class TemplatesEndpoints
 				return Results.BadRequest(new { error = "File exceeds 20 MB limit." });
 
 			var ext = Path.GetExtension(file.FileName);
-			var isPdfByExt = string.Equals(ext, ".pdf", StringComparison.OrdinalIgnoreCase);
-			var isPdfByContentType = string.Equals(file.ContentType, "application/pdf", StringComparison.OrdinalIgnoreCase);
-			if (!isPdfByExt && !isPdfByContentType)
-				return Results.BadRequest(new { error = "Only PDF files are allowed (.pdf or application/pdf)." });
+			var isPdf = string.Equals(ext, ".pdf", StringComparison.OrdinalIgnoreCase);
+			var isImage = string.Equals(ext, ".jpg", StringComparison.OrdinalIgnoreCase) || 
+			              string.Equals(ext, ".jpeg", StringComparison.OrdinalIgnoreCase) || 
+			              string.Equals(ext, ".png", StringComparison.OrdinalIgnoreCase);
+			
+			if (!isPdf && !isImage)
+				return Results.BadRequest(new { error = "Only PDF, JPG, and PNG files are allowed." });
 
-			// Sniff first 4 bytes for "%PDF"
+			// Sniff header bytes
 			await using var uploadStream = file.OpenReadStream();
 			var header = new byte[4];
 			var read = await uploadStream.ReadAsync(header, 0, 4);
-			if (read != 4 || header[0] != (byte)'%' || header[1] != (byte)'P' || header[2] != (byte)'D' || header[3] != (byte)'F')
-				return Results.BadRequest(new { error = "Uploaded file does not appear to be a PDF." });
+			
+			// Simple magic number check logic
+			if (isPdf)
+			{
+				if (read != 4 || header[0] != (byte)'%' || header[1] != (byte)'P' || header[2] != (byte)'D' || header[3] != (byte)'F')
+					return Results.BadRequest(new { error = "Uploaded file does not appear to be a PDF." });
+			}
+			// For images, we trust the extension for now + basic validation if needed, skipping complex sniffing for brevity
 
 			// Reset stream to copy full content
 			uploadStream.Position = 0;
@@ -51,15 +60,18 @@ public static class TemplatesEndpoints
 			var templatesDir = StoragePaths.GetTemplatesDir(env.ContentRootPath);
 			Directory.CreateDirectory(templatesDir);
 
-			var storedFilePath = Path.Combine(templatesDir, $"{id}.pdf");
+			// Store with original extension to support images
+			var storedFilePath = Path.Combine(templatesDir, $"{id}{ext}");
 
 			await using (var outStream = new FileStream(storedFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
 			{
 				await uploadStream.CopyToAsync(outStream);
 			}
 
-			// Detect if PDF has form fields using iText7
-			bool hasFormFields = false;
+		// Detect if PDF has form fields using iText7 (only if PDF)
+		bool hasFormFields = false;
+		if (isPdf)
+		{
 			try
 			{
 				using var pdfReader = new iText.Kernel.Pdf.PdfReader(storedFilePath);
@@ -69,9 +81,9 @@ public static class TemplatesEndpoints
 			}
 			catch
 			{
-				// If detection fails, assume no form fields
 				hasFormFields = false;
 			}
+		}
 
 			var createdAtUtc = DateTime.UtcNow;
 			var entity = new Backend.Core.Models.PdfTemplate
@@ -80,7 +92,7 @@ public static class TemplatesEndpoints
 				Title = string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(file.FileName) : title!,
 				CollegeName = string.IsNullOrWhiteSpace(collegeName) ? null : collegeName,
 				OriginalFileName = file.FileName,
-				StoredPath = storedFilePath, // store absolute path for consistency
+				StoredPath = storedFilePath, // store absolute path with extension
 				HasFormFields = hasFormFields,
 				CreatedAtUtc = createdAtUtc,
 			};
@@ -108,25 +120,35 @@ public static class TemplatesEndpoints
 		.WithName("ListTemplates")
 		.Produces<List<TemplateDto>>(StatusCodes.Status200OK);
 
-		// GET /api/templates/{id}/file - stream PDF (inline + range)
-endpoints.MapGet("/api/templates/{id:guid}/file", async (Guid id, AppDbContext db, HttpContext ctx) =>
-{
-    var tpl = await db.PdfTemplates.FirstOrDefaultAsync(t => t.Id == id);
-    if (tpl is null)
-        return Results.NotFound(new { error = "Template not found." });
+		// GET /api/templates/{id}/file - stream PDF or Image
+		endpoints.MapGet("/api/templates/{id:guid}/file", async (Guid id, AppDbContext db, HttpContext ctx) =>
+		{
+			var tpl = await db.PdfTemplates.FirstOrDefaultAsync(t => t.Id == id);
+			if (tpl is null)
+				return Results.NotFound(new { error = "Template not found." });
 
-    if (string.IsNullOrWhiteSpace(tpl.StoredPath) || !File.Exists(tpl.StoredPath))
-        return Results.NotFound(new { error = "Template file missing on disk." });
+			if (string.IsNullOrWhiteSpace(tpl.StoredPath) || !File.Exists(tpl.StoredPath))
+				return Results.NotFound(new { error = "Template file missing on disk." });
 
-    var stream = new FileStream(tpl.StoredPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+			var stream = new FileStream(tpl.StoredPath, FileMode.Open, FileAccess.Read, FileShare.Read);
 
-    // Force inline preview (NOT attachment download)
-    ctx.Response.Headers["Content-Disposition"] =
-        $"inline; filename=\"{tpl.OriginalFileName}\"";
+			// Determine content type
+			var ext = Path.GetExtension(tpl.StoredPath).ToLowerInvariant();
+			var contentType = ext switch
+			{
+				".png" => "image/png",
+				".jpg" => "image/jpeg",
+				".jpeg" => "image/jpeg",
+				_ => "application/pdf"
+			};
 
-    // Enable range requests (helps browser PDF viewer)
-    return Results.File(stream, "application/pdf", enableRangeProcessing: true);
-})
+			// Force inline preview (NOT attachment download)
+			ctx.Response.Headers["Content-Disposition"] =
+				$"inline; filename=\"{tpl.OriginalFileName}\"";
+
+			// Enable range requests (helps browser PDF viewer)
+			return Results.File(stream, contentType, enableRangeProcessing: true);
+		})
 .WithName("GetTemplateFile")
 .Produces(StatusCodes.Status200OK)
 .Produces(StatusCodes.Status404NotFound);
@@ -158,8 +180,68 @@ endpoints.MapGet("/api/templates/{id:guid}/file", async (Guid id, AppDbContext d
 		})
 		.WithName("DeleteTemplate")
 		.Produces(StatusCodes.Status204NoContent)
-		.Produces(StatusCodes.Status404NotFound);
+	.Produces(StatusCodes.Status404NotFound);
 
-		return endpoints;
+		// GET /api/templates/{id}/fields - get PDF form fields
+		endpoints.MapGet("/api/templates/{id:guid}/fields", async (Guid id, AppDbContext db) =>
+		{
+			var template = await db.PdfTemplates.FirstOrDefaultAsync(t => t.Id == id);
+			if (template is null)
+				return Results.NotFound(new { error = "Template not found." });
+
+			if (!template.HasFormFields)
+				return Results.Ok(new PdfFieldsResponseDto(false, Array.Empty<PdfFieldDto>()));
+
+			if (string.IsNullOrWhiteSpace(template.StoredPath) || !File.Exists(template.StoredPath))
+				return Results.NotFound(new { error = "Template file missing on disk." });
+
+			try
+			{
+				using var pdfReader = new iText.Kernel.Pdf.PdfReader(template.StoredPath);
+				using var pdfDoc = new iText.Kernel.Pdf.PdfDocument(pdfReader);
+				var acroForm = iText.Forms.PdfAcroForm.GetAcroForm(pdfDoc, false);
+
+				if (acroForm == null)
+					return Results.Ok(new PdfFieldsResponseDto(false, Array.Empty<PdfFieldDto>()));
+
+				var fields = acroForm.GetAllFormFields();
+				var fieldDtos = new List<PdfFieldDto>();
+
+				foreach (var kvp in fields)
+				{
+					var fieldName = kvp.Key;
+					
+					// Clean up field name for label
+					var label = fieldName;
+					label = System.Text.RegularExpressions.Regex.Replace(label, @"\[\d+\]", "");
+					label = label.Replace("_", " ").Replace(".", " ").Replace("topmostSubform", "").Replace("Page1", "").Trim();
+					
+					// If label is empty or just whitespace, use field name
+					if (string.IsNullOrWhiteSpace(label))
+						label = fieldName;
+
+					fieldDtos.Add(new PdfFieldDto(
+						Name: fieldName,
+						Type: "text",
+						Label: label,
+						Required: false,
+						DefaultValue: null,
+						Options: null
+					));
+				}
+
+				return Results.Ok(new PdfFieldsResponseDto(true, fieldDtos.ToArray()));
+			}
+			catch (Exception ex)
+			{
+				return Results.BadRequest(new { error = $"Failed to extract PDF fields: {ex.Message}" });
+			}
+		})
+		.WithName("GetTemplateFields")
+		.Produces<PdfFieldsResponseDto>(StatusCodes.Status200OK)
+		.Produces(StatusCodes.Status404NotFound)
+		.Produces(StatusCodes.Status400BadRequest);
+
+	return endpoints;
 	}
 }

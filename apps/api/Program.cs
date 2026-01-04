@@ -59,6 +59,9 @@ builder.Services.AddAuthorization();
 // PDF exporter
 builder.Services.AddScoped<IPdfExporter, PdfExporter>();
 
+// Stirling PDF service
+builder.Services.AddHttpClient<Backend.Core.Services.IStirlingPdfService, Backend.Infrastructure.Services.StirlingPdfService>();
+
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();

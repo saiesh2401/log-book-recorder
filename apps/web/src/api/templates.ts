@@ -9,8 +9,27 @@ export interface Template {
   createdAtUtc: string;
 }
 
+export interface PdfField {
+  name: string;
+  type: string;
+  label: string | null;
+  required: boolean;
+  defaultValue: string | null;
+  options: string[] | null;
+}
+
+export interface PdfFieldsResponse {
+  hasFormFields: boolean;
+  fields: PdfField[];
+}
+
 export async function getTemplates(): Promise<Template[]> {
   const response = await api.get<Template[]>('/api/templates');
+  return response.data;
+}
+
+export async function getPdfFields(templateId: string): Promise<PdfFieldsResponse> {
+  const response = await api.get<PdfFieldsResponse>(`/api/templates/${templateId}/fields`);
   return response.data;
 }
 
